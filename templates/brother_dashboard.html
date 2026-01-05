@@ -119,7 +119,7 @@
             <div class="navbar-nav me-auto">
                 <span class="navbar-text">
                     Welcome, {{ member.name }}
-                    <span class="badge role-badge bg-secondary ms-2">{{ member.role.replace('_', ' ').title() }}</span>
+                    <span class="badge role-badge bg-secondary ms-2">{{ user_role.replace('_', ' ').title() }}</span>
                 </span>
             </div>
             <div class="navbar-nav">
@@ -170,233 +170,313 @@
             </div>
         </div>
 
-        <div class="row">
-            <!-- My Dues Information -->
-            <div class="col-lg-8">
-                <div class="card dashboard-card">
-                    <div class="card-header">
-                        <h5><i class="bi bi-credit-card"></i> My Dues Information</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="card bg-primary text-white">
-                                    <div class="card-body text-center">
-                                        <h4>${{ "%.2f"|format(member.dues_amount) }}</h4>
-                                        <small>Total Dues</small>
-                                    </div>
-                                </div>
+        <ul class="nav nav-tabs mb-4" id="dashboardTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="brother-tab" data-bs-toggle="tab" data-bs-target="#brother" type="button" role="tab">
+                    <i class="bi bi-person-badge"></i> Brother
+                </button>
+            </li>
+            {% if user_role in ['president', 'vice_president', 'admin', 'treasurer'] %}
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="executive-tab" data-bs-toggle="tab" data-bs-target="#executive" type="button" role="tab">
+                    <i class="bi bi-graph-up-arrow"></i> Executive
+                </button>
+            </li>
+            {% endif %}
+            {% for officer_role in officer_roles %}
+                {% if officer_role in chair_role_to_category and (user_role == officer_role or user_role in ['president', 'vice_president', 'admin', 'treasurer']) %}
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="{{ officer_role }}-tab" data-bs-toggle="tab" data-bs-target="#{{ officer_role }}" type="button" role="tab">
+                        <i class="bi bi-briefcase"></i> {{ officer_role.replace('_', ' ').title() }}
+                    </button>
+                </li>
+                {% endif %}
+            {% endfor %}
+        </ul>
+
+        <div class="tab-content" id="dashboardTabsContent">
+            <div class="tab-pane fade show active" id="brother" role="tabpanel">
+                <div class="row">
+                    <div class="col-lg-8">
+                        <div class="card dashboard-card">
+                            <div class="card-header">
+                                <h5><i class="bi bi-credit-card"></i> My Dues Information</h5>
                             </div>
-                            <div class="col-md-4">
-                                <div class="card bg-success text-white">
-                                    <div class="card-body text-center">
-                                        {% set total_paid = member.payments_made|map(attribute='amount')|sum %}
-                                        <h4>${{ "%.2f"|format(total_paid) }}</h4>
-                                        <small>Paid</small>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="card bg-primary text-white">
+                                            <div class="card-body text-center">
+                                                <h4>${{ "%.2f"|format(member.dues_amount) }}</h4>
+                                                <small>Total Dues</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card bg-success text-white">
+                                            <div class="card-body text-center">
+                                                <h4>${{ "%.2f"|format(total_paid) }}</h4>
+                                                <small>Paid</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card bg-{% if balance <= 0 %}success{% else %}warning{% endif %} text-white">
+                                            <div class="card-body text-center">
+                                                <h4>${{ "%.2f"|format(balance) }}</h4>
+                                                <small>{% if balance <= 0 %}Paid Up!{% else %}Remaining{% endif %}</small>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="card bg-{% if balance <= 0 %}success{% else %}warning{% endif %} text-white">
-                                    <div class="card-body text-center">
-                                        <h4>${{ "%.2f"|format(balance) }}</h4>
-                                        <small>{% if balance <= 0 %}Paid Up!{% else %}Remaining{% endif %}</small>
+
+                                {% if payment_schedule %}
+                                <div class="mt-4">
+                                    <h6>Payment Schedule ({{ member.payment_plan.title() }})</h6>
+                                    {% for payment in payment_schedule %}
+                                    <div class="payment-item {{ payment.status }}">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <strong>{{ payment.description }}</strong>
+                                                <br><small class="text-muted">Due: {{ payment.due_date[:10] }}</small>
+                                            </div>
+                                            <div class="text-end">
+                                                <h6 class="mb-0">${{ "%.2f"|format(payment.amount) }}</h6>
+                                                {% if payment.status == 'paid' %}
+                                                    <small class="text-success">✓ Paid</small>
+                                                {% else %}
+                                                    <small class="text-warning">⏱ Pending</small>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+
+                                {% if payment_history %}
+                                <div class="mt-4">
+                                    <h6>Recent Payments</h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Date</th>
+                                                    <th>Amount</th>
+                                                    <th>Method</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for payment in payment_history[:5] %}
+                                                <tr>
+                                                    <td>{{ payment.date[:10] }}</td>
+                                                    <td>${{ "%.2f"|format(payment.amount) }}</td>
+                                                    <td>{{ payment.method }}</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
                                     </div>
                                 </div>
+                                {% endif %}
                             </div>
                         </div>
 
-                        <!-- Payment Schedule -->
-                        {% if payment_schedule %}
-                        <div class="mt-4">
-                            <h6>Payment Schedule ({{ member.payment_plan.title() }})</h6>
-                            {% for payment in payment_schedule %}
-                            <div class="payment-item {{ payment.status }}">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <strong>{{ payment.description }}</strong>
-                                        <br><small class="text-muted">Due: {{ payment.due_date[:10] }}</small>
+                        <div class="card dashboard-card">
+                            <div class="card-header">
+                                <h5><i class="bi bi-calendar-event"></i> Chapter Calendar</h5>
+                            </div>
+                            <div class="card-body">
+                                {% if chapter_events %}
+                                <div class="table-responsive">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Event</th>
+                                                <th>Category</th>
+                                                <th>Location</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for event in chapter_events %}
+                                            <tr>
+                                                <td>{{ event.date.strftime('%Y-%m-%d') if event.date else 'TBD' }}</td>
+                                                <td>{{ event.title }}</td>
+                                                <td>{{ event.category }}</td>
+                                                <td>{{ event.location or 'TBD' }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {% else %}
+                                <p class="text-muted">No upcoming events have been added yet.</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-lg-4">
+                        <div class="card dashboard-card">
+                            <div class="card-header">
+                                <h5><i class="bi bi-person-lines-fill"></i> My Information</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-2">
+                                    <small class="text-muted">Bond Number:</small><br>
+                                    <strong>#{{ member.id }}</strong>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Contact:</small><br>
+                                    <strong>{{ member.contact }}</strong>
+                                    <span class="badge {% if member.contact_type == 'email' %}bg-info{% else %}bg-secondary{% endif %} ms-2">
+                                        {% if member.contact_type == 'email' %}<i class="bi bi-envelope"></i>{% else %}<i class="bi bi-phone"></i>{% endif %}
+                                    </span>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Role:</small><br>
+                                    <strong>{{ user_role.replace('_', ' ').title() }}</strong>
+                                </div>
+                                <div class="mb-2">
+                                    <small class="text-muted">Semester:</small><br>
+                                    <strong>{{ member.semester_id.title() if member.semester_id != 'current' else 'Current' }}</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if user_role in ['president', 'vice_president', 'admin', 'treasurer'] %}
+            <div class="tab-pane fade" id="executive" role="tabpanel">
+                <div class="row">
+                    <div class="col-lg-8">
+                        <div class="card dashboard-card">
+                            <div class="card-header">
+                                <h5><i class="bi bi-graph-up"></i> Financial Overview</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3 d-flex justify-content-between">
+                                    <small>Total Members:</small>
+                                    <strong>{{ total_members }}</strong>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between">
+                                        <small>Dues Collected:</small>
+                                        <strong>${{ "%.2f"|format(dues_summary.total_collected) }}</strong>
                                     </div>
-                                    <div class="text-end">
-                                        <h6 class="mb-0">${{ "%.2f"|format(payment.amount) }}</h6>
-                                        {% if payment.status == 'paid' %}
-                                            <small class="text-success">✓ Paid</small>
+                                    <div class="progress mt-1" style="height: 5px;">
+                                        <div class="progress-bar bg-success" style="width: {{ dues_summary.collection_rate }}%"></div>
+                                    </div>
+                                    <small class="text-muted">{{ "%.1f"|format(dues_summary.collection_rate) }}% collected</small>
+                                </div>
+                                <div class="mb-3 d-flex justify-content-between">
+                                    <small>Outstanding:</small>
+                                    <strong class="text-warning">${{ "%.2f"|format(dues_summary.outstanding) }}</strong>
+                                </div>
+                                <div class="mb-3 d-flex justify-content-between">
+                                    <small>Total Expenses:</small>
+                                    {% set total_expenses = budget_summary.values()|map(attribute='spent')|sum %}
+                                    <strong>${{ "%.2f"|format(total_expenses) }}</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="card dashboard-card">
+                            <div class="card-header">
+                                <h5><i class="bi bi-shield-check"></i> Permissions</h5>
+                            </div>
+                            <div class="card-body">
+                                <p class="text-muted">Manage officer access, chair roles, and permissions.</p>
+                                <a class="btn btn-primary w-100" href="{{ url_for('role_management') }}">
+                                    <i class="bi bi-person-gear"></i> Manage Roles
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {% for officer_role in officer_roles %}
+                {% if officer_role in chair_role_to_category and (user_role == officer_role or user_role in ['president', 'vice_president', 'admin', 'treasurer']) %}
+                    <div class="tab-pane fade" id="{{ officer_role }}" role="tabpanel">
+                        <div class="row">
+                            <div class="col-lg-8">
+                                <div class="card dashboard-card">
+                                    <div class="card-header">
+                                        <h5><i class="bi bi-wallet2"></i> {{ chair_role_to_category[officer_role] }} Budget</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        {% if chair_role_to_category[officer_role] in budget_summary %}
+                                            {% set budget = budget_summary[chair_role_to_category[officer_role]] %}
+                                            <div class="text-center">
+                                                <h4>${{ "%.2f"|format(budget.spent) }}</h4>
+                                                <small>of ${{ "%.2f"|format(budget.budget_limit) }} spent</small>
+                                                <div class="progress mt-2" style="height: 10px;">
+                                                    <div class="progress-bar 
+                                                        {% if budget.percent_used > 90 %}bg-danger
+                                                        {% elif budget.percent_used > 70 %}bg-warning
+                                                        {% else %}bg-success{% endif %}" 
+                                                        style="width: {{ budget.percent_used }}%"></div>
+                                                </div>
+                                                <small class="text-muted">{{ "%.1f"|format(budget.percent_used) }}% used</small>
+                                            </div>
                                         {% else %}
-                                            <small class="text-warning">⏱ Pending</small>
+                                            <p class="text-muted text-center">No budget information available yet.</p>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                <div class="card dashboard-card">
+                                    <div class="card-header">
+                                        <h5><i class="bi bi-calendar-plus"></i> Chair Actions</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        {% if user_role == officer_role or user_role in ['admin', 'treasurer'] %}
+                                            <div class="d-grid gap-2">
+                                                <a class="btn btn-outline-primary" href="{{ url_for('chair.create_event') }}">
+                                                    <i class="bi bi-plus-circle"></i> Add Event to Calendar
+                                                </a>
+                                                <a class="btn btn-outline-secondary" href="{{ url_for('chair.events_list') }}">
+                                                    <i class="bi bi-calendar-event"></i> View My Events
+                                                </a>
+                                                <a class="btn btn-outline-success" href="{{ url_for('chair.create_spending_plan') }}">
+                                                    <i class="bi bi-cash-coin"></i> Submit Budget Request
+                                                </a>
+                                                <a class="btn btn-outline-dark" href="{{ url_for('chair.spending_plans_list') }}">
+                                                    <i class="bi bi-journal-check"></i> View Budget Requests
+                                                </a>
+                                            </div>
+                                        {% else %}
+                                            <p class="text-muted mb-0">Only the assigned chair can create events and submit budget requests.</p>
                                         {% endif %}
                                     </div>
                                 </div>
                             </div>
-                            {% endfor %}
-                        </div>
-                        {% endif %}
 
-                        <!-- Payment History -->
-                        {% if member.payments_made %}
-                        <div class="mt-4">
-                            <h6>Recent Payments</h6>
-                            <div class="table-responsive">
-                                <table class="table table-sm">
-                                    <thead>
-                                        <tr>
-                                            <th>Date</th>
-                                            <th>Amount</th>
-                                            <th>Method</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {% for payment in member.payments_made[-5:] %}
-                                        <tr>
-                                            <td>{{ payment.date[:10] }}</td>
-                                            <td>${{ "%.2f"|format(payment.amount) }}</td>
-                                            <td>{{ payment.method }}</td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-
-            <!-- Role-Specific Information -->
-            <div class="col-lg-4">
-                {% if member.role in ['president', 'vice_president'] %}
-                <!-- Executive Overview -->
-                <div class="card dashboard-card">
-                    <div class="card-header">
-                        <h5><i class="bi bi-graph-up"></i> Financial Overview</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <div class="d-flex justify-content-between">
-                                <small>Total Members:</small>
-                                <strong>{{ total_members }}</strong>
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <div class="d-flex justify-content-between">
-                                <small>Dues Collected:</small>
-                                <strong>${{ "%.2f"|format(dues_summary.total_collected) }}</strong>
-                            </div>
-                            <div class="progress mt-1" style="height: 5px;">
-                                <div class="progress-bar bg-success" style="width: {{ dues_summary.collection_rate }}%"></div>
-                            </div>
-                            <small class="text-muted">{{ "%.1f"|format(dues_summary.collection_rate) }}% collected</small>
-                        </div>
-                        <div class="mb-3">
-                            <div class="d-flex justify-content-between">
-                                <small>Outstanding:</small>
-                                <strong class="text-warning">${{ "%.2f"|format(dues_summary.outstanding) }}</strong>
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <div class="d-flex justify-content-between">
-                                <small>Total Expenses:</small>
-                                {% set total_expenses = budget_summary.values()|map(attribute='spent')|sum %}
-                                <strong>${{ "%.2f"|format(total_expenses) }}</strong>
+                            <div class="col-lg-4">
+                                <div class="card dashboard-card">
+                                    <div class="card-header">
+                                        <h5><i class="bi bi-journal-text"></i> Chair Manual</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        {% if chair_manual_links[officer_role] %}
+                                            <a class="btn btn-primary w-100" href="{{ chair_manual_links[officer_role] }}" target="_blank" rel="noopener">
+                                                <i class="bi bi-link-45deg"></i> Open Manual
+                                            </a>
+                                        {% else %}
+                                            <p class="text-muted">Manual link not configured yet.</p>
+                                        {% endif %}
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
                 {% endif %}
-
-                {% if member.role in ['social_chair', 'phi_ed_chair', 'brotherhood_chair', 'recruitment_chair'] %}
-                <!-- Chair-Specific Budget View -->
-                <div class="card dashboard-card">
-                    <div class="card-header">
-                        <h5><i class="bi bi-wallet2"></i> My Budget</h5>
-                    </div>
-                    <div class="card-body">
-                        {% if member.role == 'social_chair' and 'Social' in budget_summary %}
-                            {% set budget = budget_summary['Social'] %}
-                            <div class="text-center">
-                                <h4>${{ "%.2f"|format(budget.spent) }}</h4>
-                                <small>of ${{ "%.2f"|format(budget.budget_limit) }} spent</small>
-                                <div class="progress mt-2" style="height: 10px;">
-                                    <div class="progress-bar 
-                                        {% if budget.percent_used > 90 %}bg-danger
-                                        {% elif budget.percent_used > 70 %}bg-warning
-                                        {% else %}bg-success{% endif %}" 
-                                        style="width: {{ budget.percent_used }}%"></div>
-                                </div>
-                                <small class="text-muted">{{ "%.1f"|format(budget.percent_used) }}% used</small>
-                            </div>
-                        {% elif member.role == 'phi_ed_chair' and 'Phi ED' in budget_summary %}
-                            {% set budget = budget_summary['Phi ED'] %}
-                            <div class="text-center">
-                                <h4>${{ "%.2f"|format(budget.spent) }}</h4>
-                                <small>of ${{ "%.2f"|format(budget.budget_limit) }} spent</small>
-                                <div class="progress mt-2" style="height: 10px;">
-                                    <div class="progress-bar 
-                                        {% if budget.percent_used > 90 %}bg-danger
-                                        {% elif budget.percent_used > 70 %}bg-warning
-                                        {% else %}bg-success{% endif %}" 
-                                        style="width: {{ budget.percent_used }}%"></div>
-                                </div>
-                                <small class="text-muted">{{ "%.1f"|format(budget.percent_used) }}% used</small>
-                            </div>
-                        {% elif member.role == 'brotherhood_chair' and 'Brotherhood' in budget_summary %}
-                            {% set budget = budget_summary['Brotherhood'] %}
-                            <div class="text-center">
-                                <h4>${{ "%.2f"|format(budget.spent) }}</h4>
-                                <small>of ${{ "%.2f"|format(budget.budget_limit) }} spent</small>
-                                <div class="progress mt-2" style="height: 10px;">
-                                    <div class="progress-bar 
-                                        {% if budget.percent_used > 90 %}bg-danger
-                                        {% elif budget.percent_used > 70 %}bg-warning
-                                        {% else %}bg-success{% endif %}" 
-                                        style="width: {{ budget.percent_used }}%"></div>
-                                </div>
-                                <small class="text-muted">{{ "%.1f"|format(budget.percent_used) }}% used</small>
-                            </div>
-                        {% elif member.role == 'recruitment_chair' and 'Recruitment' in budget_summary %}
-                            {% set budget = budget_summary['Recruitment'] %}
-                            <div class="text-center">
-                                <h4>${{ "%.2f"|format(budget.spent) }}</h4>
-                                <small>of ${{ "%.2f"|format(budget.budget_limit) }} spent</small>
-                                <div class="progress mt-2" style="height: 10px;">
-                                    <div class="progress-bar 
-                                        {% if budget.percent_used > 90 %}bg-danger
-                                        {% elif budget.percent_used > 70 %}bg-warning
-                                        {% else %}bg-success{% endif %}" 
-                                        style="width: {{ budget.percent_used }}%"></div>
-                                </div>
-                                <small class="text-muted">{{ "%.1f"|format(budget.percent_used) }}% used</small>
-                            </div>
-                        {% else %}
-                            <p class="text-muted text-center">No budget information available for your role.</p>
-                        {% endif %}
-                    </div>
-                </div>
-                {% endif %}
-
-                <!-- Contact Information -->
-                <div class="card dashboard-card">
-                    <div class="card-header">
-                        <h5><i class="bi bi-person-lines-fill"></i> My Information</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-2">
-                            <small class="text-muted">Contact:</small><br>
-                            <strong>{{ member.contact }}</strong>
-                            <span class="badge {% if member.contact_type == 'email' %}bg-info{% else %}bg-secondary{% endif %} ms-2">
-                                {% if member.contact_type == 'email' %}<i class="bi bi-envelope"></i>{% else %}<i class="bi bi-phone"></i>{% endif %}
-                            </span>
-                        </div>
-                        <div class="mb-2">
-                            <small class="text-muted">Role:</small><br>
-                            <strong>{{ member.role.replace('_', ' ').title() }}</strong>
-                        </div>
-                        <div class="mb-2">
-                            <small class="text-muted">Semester:</small><br>
-                            <strong>{{ member.semester_id.title() if member.semester_id != 'current' else 'Current' }}</strong>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            {% endfor %}
         </div>
     </div>
 
