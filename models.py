@@ -10,10 +10,15 @@ import json
 db = SQLAlchemy()
 
 # Association table for many-to-many relationship between Users and Roles
-user_roles = db.Table('user_roles',
-    db.Column('user_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
-    db.Column('role_id', db.Integer, db.ForeignKey('roles.id'), primary_key=True),
-    db.Column('assigned_at', db.DateTime, default=datetime.utcnow)
+user_roles = db.Table(
+    'user_roles',
+    db.Column('id', db.Integer, primary_key=True),
+    db.Column('user_id', db.Integer, db.ForeignKey('users.id'), nullable=False),
+    db.Column('role_id', db.Integer, db.ForeignKey('roles.id'), nullable=False),
+    db.Column('granted_by_user_id', db.Integer, db.ForeignKey('users.id'), nullable=True),
+    db.Column('granted_at', db.DateTime, default=datetime.utcnow, nullable=False),
+    db.Column('revoked_at', db.DateTime, nullable=True),
+    db.UniqueConstraint('user_id', 'role_id', 'revoked_at', name='uq_user_roles_active')
 )
 
 class User(UserMixin, db.Model):
@@ -21,19 +26,34 @@ class User(UserMixin, db.Model):
     __tablename__ = 'users'
     
     id = db.Column(db.Integer, primary_key=True)
-    phone = db.Column(db.String(20), unique=True, nullable=False)
+    phone = db.Column(db.String(20), unique=True, nullable=True)
     password_hash = db.Column(db.String(255), nullable=False)
     first_name = db.Column(db.String(50), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
     status = db.Column(db.String(20), default='pending')  # pending, active, suspended
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_login_at = db.Column(db.DateTime, nullable=True)
     approved_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     approved_at = db.Column(db.DateTime, nullable=True)
     
     # Relationships
-    roles = db.relationship('Role', secondary=user_roles, lazy='subquery',
-                           backref=db.backref('users', lazy=True))
+    roles = db.relationship(
+        'Role',
+        secondary=user_roles,
+        primaryjoin=id == user_roles.c.user_id,
+        secondaryjoin=lambda: Role.id == user_roles.c.role_id,
+        foreign_keys=[user_roles.c.user_id, user_roles.c.role_id],
+        lazy='subquery',
+        backref=db.backref(
+            'users',
+            lazy=True,
+            primaryjoin=lambda: Role.id == user_roles.c.role_id,
+            secondaryjoin=lambda: User.id == user_roles.c.user_id,
+            foreign_keys=[user_roles.c.user_id, user_roles.c.role_id],
+        ),
+    )
     member_record = db.relationship('Member', backref='user_account', uselist=False)
     
     # Requests and submissions
@@ -60,27 +80,34 @@ class User(UserMixin, db.Model):
     
     def has_role(self, role_name):
         """Check if user has a specific role"""
-        return any(role.name == role_name for role in self.roles)
+        return any(role.name == role_name for role in self.get_active_roles())
+
+    def get_active_roles(self):
+        """Return roles that are currently active (not revoked)."""
+        return (
+            Role.query.join(user_roles, Role.id == user_roles.c.role_id)
+            .filter(user_roles.c.user_id == self.id, user_roles.c.revoked_at.is_(None))
+            .all()
+        )
     
     def get_primary_role(self):
         """Get the user's primary/highest role"""
-        if not self.roles:
+        active_roles = self.get_active_roles()
+        if not active_roles:
             return None
         
         # Role hierarchy (highest to lowest)
         role_hierarchy = {
-            'admin': 8,
-            'treasurer': 7,
-            'president': 6,
-            'vice_president': 5,
-            'social_chair': 4,
-            'phi_ed_chair': 4,
-            'recruitment_chair': 4,
-            'brotherhood_chair': 4,
+            'president': 7,
+            'vice_president': 6,
+            'treasurer': 5,
+            'chair_brotherhood': 4,
+            'chair_social': 4,
+            'chair_recruitment': 4,
             'brother': 1
         }
         
-        return max(self.roles, key=lambda r: role_hierarchy.get(r.name, 0))
+        return max(active_roles, key=lambda r: role_hierarchy.get(r.name, 0))
     
     @property
     def full_name(self):
@@ -117,11 +144,13 @@ class Semester(db.Model):
     __tablename__ = 'semesters'
     
     id = db.Column(db.String(50), primary_key=True)  # e.g., "fall_2024"
-    name = db.Column(db.String(50), nullable=False)  # e.g., "Fall 2024"
+    name = db.Column(db.String(50), nullable=False)
     year = db.Column(db.Integer, nullable=False)
-    season = db.Column(db.String(20), nullable=False)  # Fall, Spring, Summer
+    season = db.Column(db.String(20), nullable=False)
     start_date = db.Column(db.DateTime, nullable=False)
     end_date = db.Column(db.DateTime, nullable=True)
+    starts_on = db.Column(db.DateTime, nullable=True)
+    ends_on = db.Column(db.DateTime, nullable=True)
     is_current = db.Column(db.Boolean, default=False)
     archived = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -198,6 +227,148 @@ class Payment(db.Model):
     
     def __repr__(self):
         return f'<Payment ${self.amount} by {self.member.name}>'
+
+
+class AuditLog(db.Model):
+    """Audit trail for sensitive actions."""
+    __tablename__ = 'audit_log'
+
+    id = db.Column(db.Integer, primary_key=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    action = db.Column(db.String(50), nullable=False)
+    target_type = db.Column(db.String(50), nullable=False)
+    target_id = db.Column(db.Integer, nullable=True)
+    details_json = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Committee(db.Model):
+    """Committees with fixed names and active flags."""
+    __tablename__ = 'committees'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+
+
+class CommitteeBudgetAllocation(db.Model):
+    """Semester-based committee allocations."""
+    __tablename__ = 'committee_budget_allocations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    semester_id = db.Column(db.String(50), db.ForeignKey('semesters.id'), nullable=False)
+    committee_id = db.Column(db.Integer, db.ForeignKey('committees.id'), nullable=False)
+    allocated_cents = db.Column(db.Integer, nullable=False)
+    allocated_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    allocated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    notes = db.Column(db.Text, nullable=True)
+
+
+class CommitteeTransaction(db.Model):
+    """Committee transactions tied to a semester and optional event."""
+    __tablename__ = 'committee_transactions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    semester_id = db.Column(db.String(50), db.ForeignKey('semesters.id'), nullable=False)
+    committee_id = db.Column(db.Integer, db.ForeignKey('committees.id'), nullable=False)
+    amount_cents = db.Column(db.Integer, nullable=False)
+    vendor = db.Column(db.String(120), nullable=True)
+    category = db.Column(db.String(120), nullable=True)
+    memo = db.Column(db.Text, nullable=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=True)
+    is_deleted = db.Column(db.Boolean, default=False)
+    deleted_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    deleted_at = db.Column(db.DateTime, nullable=True)
+
+
+class MasterLedger(db.Model):
+    """Master ledger that does not reset by semester."""
+    __tablename__ = 'master_ledger'
+
+    id = db.Column(db.Integer, primary_key=True)
+    amount_cents = db.Column(db.Integer, nullable=False)
+    category = db.Column(db.String(120), nullable=True)
+    memo = db.Column(db.Text, nullable=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    is_deleted = db.Column(db.Boolean, default=False)
+    deleted_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    deleted_at = db.Column(db.DateTime, nullable=True)
+
+
+class DuesCharge(db.Model):
+    """Dues charges per semester and member."""
+    __tablename__ = 'dues_charges'
+
+    id = db.Column(db.Integer, primary_key=True)
+    semester_id = db.Column(db.String(50), db.ForeignKey('semesters.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    charge_cents = db.Column(db.Integer, nullable=False)
+    reason = db.Column(db.String(255), nullable=False)
+    issued_at = db.Column(db.DateTime, default=datetime.utcnow)
+    issued_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    due_date = db.Column(db.DateTime, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    is_deleted = db.Column(db.Boolean, default=False)
+    deleted_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    deleted_at = db.Column(db.DateTime, nullable=True)
+
+
+class DuesPayment(db.Model):
+    """Payments recorded against dues charges."""
+    __tablename__ = 'dues_payments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    amount_cents = db.Column(db.Integer, nullable=False)
+    paid_at = db.Column(db.DateTime, default=datetime.utcnow)
+    method = db.Column(db.String(30), nullable=False)
+    external_ref = db.Column(db.String(120), nullable=True)
+    recorded_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    is_deleted = db.Column(db.Boolean, default=False)
+    deleted_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    deleted_at = db.Column(db.DateTime, nullable=True)
+
+
+class DuesPaymentAllocation(db.Model):
+    """Allocations from a payment to specific charges."""
+    __tablename__ = 'dues_payment_allocations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    payment_id = db.Column(db.Integer, db.ForeignKey('dues_payments.id'), nullable=False)
+    charge_id = db.Column(db.Integer, db.ForeignKey('dues_charges.id'), nullable=False)
+    allocated_cents = db.Column(db.Integer, nullable=False)
+
+
+class GoogleEventLink(db.Model):
+    """Google Calendar linkage for events."""
+    __tablename__ = 'google_event_links'
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=False)
+    google_calendar_id = db.Column(db.String(255), nullable=False)
+    google_event_id = db.Column(db.String(255), nullable=False)
+    last_synced_at = db.Column(db.DateTime, nullable=True)
+    sync_status = db.Column(db.String(20), nullable=False, default='pending')
+    last_error = db.Column(db.Text, nullable=True)
+
+
+class PasswordResetToken(db.Model):
+    """Password reset tokens with expiry and usage tracking."""
+    __tablename__ = 'password_reset_tokens'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    token_hash = db.Column(db.String(255), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used_at = db.Column(db.DateTime, nullable=True)
+    requested_from_ip = db.Column(db.String(45), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Transaction(db.Model):
     """Financial transactions"""
@@ -299,11 +470,15 @@ class Event(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    category = db.Column(db.String(50), nullable=False)  # Social, Phi ED, Recruitment, Brotherhood
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    category = db.Column(db.String(50), nullable=False)  # Social, Recruitment, Brotherhood
+    committee_id = db.Column(db.Integer, db.ForeignKey('committees.id'), nullable=True)
     semester_id = db.Column(db.String(50), db.ForeignKey('semesters.id'), nullable=False)
     title = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, nullable=True)
     date = db.Column(db.DateTime, nullable=True)
+    starts_at = db.Column(db.DateTime, nullable=True)
+    ends_at = db.Column(db.DateTime, nullable=True)
     location = db.Column(db.String(200), nullable=True)
     estimated_cost = db.Column(db.Float, nullable=False, default=0.0)
     actual_cost = db.Column(db.Float, nullable=True)
@@ -312,7 +487,10 @@ class Event(db.Model):
     notes = db.Column(db.Text, nullable=True)
     spending_plan_id = db.Column(db.Integer, db.ForeignKey('spending_plans.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_archived = db.Column(db.Boolean, default=False)
+    is_deleted = db.Column(db.Boolean, default=False)
     
     # Relationships
     creator = db.relationship('User', foreign_keys=[created_by], backref='created_events')
@@ -375,96 +553,70 @@ class TreasurerConfig(db.Model):
 # Default roles and permissions
 DEFAULT_ROLES = {
     'admin': {
-        'description': 'System administrator with full access',
+        'description': 'System administrator (legacy)',
         'permissions': {
-            'view_all_data': True,
-            'edit_all_data': True,
-            'manage_users': True,
             'manage_roles': True,
-            'approve_requests': True,
-            'manage_budgets': True,
-            'send_reminders': True,
-            'system_admin': True
+            'manage_semesters': True,
+            'manage_master_budget': True,
+            'manage_committee_allocations': True,
+            'manage_dues': True,
+            'manage_events': True
         }
     },
     'brother': {
-        'description': 'Basic fraternity member',
+        'description': 'Default fraternity member access',
         'permissions': {
-            'view_own_dues': True,
-            'suggest_payment_plan': True,
-            'view_own_payments': True,
-            'view_own_requests': True
+            'view_calendar': True,
+            'view_dues': True
         }
     },
     'treasurer': {
-        'description': 'Full administrative access',
+        'description': 'Master budget and dues administration',
         'permissions': {
-            'view_all_data': True,
-            'edit_all_data': True,
-            'manage_users': True,
-            'manage_roles': True,
-            'approve_requests': True,
-            'manage_budgets': True,
-            'send_reminders': True
+            'manage_master_budget': True,
+            'manage_committee_allocations': True,
+            'manage_dues': True,
+            'manage_events': True
         }
     },
     'president': {
-        'description': 'Read-only access to all treasurer data',
+        'description': 'Admin-level access with oversight tools',
         'permissions': {
-            'view_all_data': True,
-            'view_budgets': True,
-            'view_members': True,
-            'view_transactions': True
+            'manage_roles': True,
+            'manage_semesters': True,
+            'manage_master_budget': True,
+            'manage_committee_allocations': True,
+            'manage_dues': True,
+            'manage_events': True
         }
     },
     'vice_president': {
-        'description': 'View all budgets, edit specific categories',
+        'description': 'Admin access for roles and semester rollover',
         'permissions': {
-            'view_all_budgets': True,
-            'edit_social_budget': True,
-            'edit_phi_ed_budget': True,
-            'edit_recruitment_budget': True,
-            'edit_brotherhood_budget': True
+            'manage_roles': True,
+            'manage_semesters': True,
+            'manage_events': True
         }
     },
-    'social_chair': {
-        'description': 'Manage social budget and expenses',
+    'chair_brotherhood': {
+        'description': 'Manage brotherhood committee budget and events',
         'permissions': {
-            'view_social_budget': True,
-            'edit_social_budget': True,
-            'add_social_expenses': True,
-            'request_reimbursement': True,
-            'create_spending_plans': True
+            'manage_committee_budget': True,
+            'manage_committee_events': True
         }
     },
-    'phi_ed_chair': {
-        'description': 'Manage phi ed budget and expenses',
+    'chair_social': {
+        'description': 'Manage social committee budget and events',
         'permissions': {
-            'view_phi_ed_budget': True,
-            'edit_phi_ed_budget': True,
-            'add_phi_ed_expenses': True,
-            'request_reimbursement': True,
-            'create_spending_plans': True
+            'manage_committee_budget': True,
+            'manage_committee_events': True
         }
     },
-    'recruitment_chair': {
-        'description': 'Manage recruitment budget and expenses',
+    'chair_recruitment': {
+        'description': 'Manage recruitment committee budget and events',
         'permissions': {
-            'view_recruitment_budget': True,
-            'edit_recruitment_budget': True,
-            'add_recruitment_expenses': True,
-            'request_reimbursement': True,
-            'create_spending_plans': True
-        }
-    },
-    'brotherhood_chair': {
-        'description': 'Manage brotherhood budget and expenses',
-        'permissions': {
-            'view_brotherhood_budget': True,
-            'edit_brotherhood_budget': True,
-            'add_brotherhood_expenses': True,
-            'request_reimbursement': True,
-            'create_spending_plans': True
+            'manage_committee_budget': True,
+            'manage_committee_events': True
         }
     }
 }
