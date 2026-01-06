@@ -10,7 +10,7 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 
 # Database imports
 from models import db, User, Role, Member, Transaction, Semester, Payment, BudgetLimit, TreasurerConfig, Event, init_default_roles
-from database import create_app as create_database_app, init_database
+from database import create_app as create_database_app, ensure_user_columns, init_database
 
 # Import Flask blueprints
 # from notifications import notifications_bp  # Commented out due to compatibility issues
@@ -46,6 +46,7 @@ print("🔄 Initializing database tables...")
 with app.app_context():
     try:
         db.create_all()
+        ensure_user_columns()
         print("✅ Database tables ready")
     except Exception as e:
         print(f"⚠️ Database table creation warning: {e}")
