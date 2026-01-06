@@ -39,8 +39,21 @@ class User(UserMixin, db.Model):
     approved_at = db.Column(db.DateTime, nullable=True)
     
     # Relationships
-    roles = db.relationship('Role', secondary=user_roles, lazy='subquery',
-                           backref=db.backref('users', lazy=True))
+    roles = db.relationship(
+        'Role',
+        secondary=user_roles,
+        primaryjoin=id == user_roles.c.user_id,
+        secondaryjoin=lambda: Role.id == user_roles.c.role_id,
+        foreign_keys=[user_roles.c.user_id, user_roles.c.role_id],
+        lazy='subquery',
+        backref=db.backref(
+            'users',
+            lazy=True,
+            primaryjoin=lambda: Role.id == user_roles.c.role_id,
+            secondaryjoin=lambda: User.id == user_roles.c.user_id,
+            foreign_keys=[user_roles.c.user_id, user_roles.c.role_id],
+        ),
+    )
     member_record = db.relationship('Member', backref='user_account', uselist=False)
     
     # Requests and submissions
