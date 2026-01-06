@@ -3,7 +3,9 @@ Database configuration and utilities
 """
 import os
 from flask import Flask
-from models import db, init_default_roles, User, Role, Member, Transaction, Semester
+from sqlalchemy import text
+
+from models import db, init_default_roles, Committee, User, Role, Member, Transaction, Semester
 
 def create_app(config_mode='development'):
     """Create and configure Flask app"""
@@ -40,9 +42,17 @@ def init_database(app):
     with app.app_context():
         # Create all tables
         db.create_all()
+
+        ensure_user_columns()
         
         # Initialize default roles
         init_default_roles()
+
+        # Initialize default committees
+        for committee_name in ["Brotherhood", "Social", "Recruitment"]:
+            if not Committee.query.filter_by(name=committee_name).first():
+                db.session.add(Committee(name=committee_name, is_active=True))
+        db.session.commit()
         
         # Check if there's an admin user
         from models import User, Role
@@ -90,6 +100,15 @@ def init_database(app):
                 print("❌ Admin role not found in database")
         else:
             print("✅ Admin user with admin role already exists")
+
+        # Ensure active users have brother role by default
+        brother_role = Role.query.filter_by(name="brother").first()
+        if brother_role:
+            active_users = User.query.filter_by(is_active=True).all()
+            for user in active_users:
+                if not user.roles:
+                    user.roles.append(brother_role)
+            db.session.commit()
         
         # Separately, check if Ebubechi exists as a brother
         ebubechi = User.query.filter_by(phone="4808198055").first()
@@ -113,6 +132,19 @@ def init_database(app):
             print("💡 Roles can be assigned via admin panel")
         
         print("Database initialized successfully!")
+
+
+def ensure_user_columns():
+    """Ensure new user columns exist for legacy SQLite databases."""
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table("users"):
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    with db.engine.begin() as connection:
+        if "is_active" not in existing_columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+        if "last_login_at" not in existing_columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN last_login_at DATETIME"))
 
 def check_database_status():
     """Check current database status"""
