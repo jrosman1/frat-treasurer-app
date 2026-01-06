@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 
 # Database imports
-from models import db, User, Role, Member, Transaction, Semester, Payment, BudgetLimit, TreasurerConfig, init_default_roles
+from models import db, User, Role, Member, Transaction, Semester, Payment, BudgetLimit, TreasurerConfig, Event, init_default_roles
 from database import create_app as create_database_app, init_database
 
 # Import Flask blueprints
@@ -17,6 +17,7 @@ from database import create_app as create_database_app, init_database
 from export_system import export_bp
 from chair_management import chair_bp
 from executive_views import exec_bp
+from portal import portal_bp
 
 
 # Load environment variables
@@ -56,6 +57,7 @@ print("✅ App initialized with database support")
 app.register_blueprint(export_bp)
 app.register_blueprint(chair_bp)
 app.register_blueprint(exec_bp)
+app.register_blueprint(portal_bp)
 
 # SMS Gateway mappings for email-to-SMS (Updated and optimized)
 SMS_GATEWAYS = {
@@ -524,6 +526,76 @@ BUDGET_CATEGORIES = [
     'Philanthropy', 'Recruitment', 'Phi ED', 'Housing', 'Bank Maintenance'
 ]
 
+CHAIR_MANUAL_LINKS = {
+    'social_chair': None,
+    'phi_ed_chair': None,
+    'recruitment_chair': None,
+    'brotherhood_chair': None
+}
+
+CHAIR_ROLE_TO_CATEGORY = {
+    'social_chair': 'Social',
+    'phi_ed_chair': 'Phi ED',
+    'recruitment_chair': 'Recruitment',
+    'brotherhood_chair': 'Brotherhood'
+}
+
+OFFICER_ROLES = [
+    'president',
+    'vice_president',
+    'social_chair',
+    'phi_ed_chair',
+    'recruitment_chair',
+    'brotherhood_chair'
+]
+
+def build_budget_summary(semester_id=None, categories=None):
+    """Build budget summary data for given semester and categories."""
+    budget_summary = {}
+    budget_limits = BudgetLimit.query
+    if semester_id:
+        budget_limits = budget_limits.filter_by(semester_id=semester_id)
+    budget_limits = budget_limits.all()
+    
+    for limit in budget_limits:
+        if categories and limit.category not in categories:
+            continue
+        expense_transactions = Transaction.query.filter_by(
+            type='expense',
+            category=limit.category,
+            semester_id=limit.semester_id
+        ).all()
+        spent = sum(t.amount for t in expense_transactions)
+        remaining = limit.amount - spent
+        percent_used = (spent / limit.amount * 100) if limit.amount > 0 else 0
+        budget_summary[limit.category] = {
+            'budget_limit': limit.amount,
+            'spent': spent,
+            'remaining': remaining,
+            'percent_used': percent_used
+        }
+    
+    return budget_summary
+
+def build_dues_summary(semester_id=None):
+    """Build dues collection summary for a semester."""
+    members_query = Member.query
+    if semester_id:
+        members_query = members_query.filter_by(semester_id=semester_id)
+    members = members_query.all()
+    
+    total_projected = sum(member.dues_amount for member in members)
+    total_collected = sum(sum(payment.amount for payment in member.payments) for member in members)
+    outstanding = total_projected - total_collected
+    collection_rate = (total_collected / total_projected * 100) if total_projected > 0 else 0
+    
+    return {
+        'total_collected': total_collected,
+        'total_projected': total_projected,
+        'outstanding': outstanding,
+        'collection_rate': collection_rate
+    }
+
 
 
 
@@ -587,16 +659,14 @@ def login():
         
         if user:
             login_user(user, remember=True)
+            user.last_login_at = datetime.utcnow()
+            db.session.commit()
             session['user'] = user.phone
             session['role'] = role
             session['user_id'] = user.id
             flash(f'Welcome, {user.first_name}!')
             
-            # Redirect based on role
-            if role == 'brother':
-                return redirect(url_for('brother_dashboard'))
-            else:
-                return redirect(url_for('dashboard'))
+            return redirect(url_for('portal.dashboard'))
         else:
             flash('Invalid username or password')
             return redirect(url_for('login'))
@@ -608,6 +678,7 @@ def login():
 
 @app.route('/logout')
 def logout():
+    logout_user()
     session.clear()
     flash('You have been logged out successfully')
     return redirect(url_for('login'))
@@ -2150,17 +2221,33 @@ def brother_dashboard_preview(role_name):
     
     mock_member = MockMember()
     balance = 250.0  # Mock balance
+    total_paid = sum(payment['amount'] for payment in mock_member.payments_made)
     
     # Mock payment schedule
     payment_schedule = [
         {'description': 'Full semester payment', 'due_date': '2024-09-01', 'amount': 500.0, 'status': 'paid'},
+    ]
+    payment_history = [
+        {
+            'amount': payment['amount'],
+            'date': payment['date'],
+            'method': payment['method']
+        }
+        for payment in mock_member.payments_made
     ]
     
     # Get summary data based on permissions
     data = {
         'member': mock_member,
         'balance': balance,
-        'payment_schedule': payment_schedule
+        'payment_schedule': payment_schedule,
+        'payment_history': payment_history,
+        'total_paid': total_paid,
+        'user_role': role_name,
+        'chair_manual_links': CHAIR_MANUAL_LINKS,
+        'chair_role_to_category': CHAIR_ROLE_TO_CATEGORY,
+        'officer_roles': OFFICER_ROLES,
+        'chapter_events': []
     }
     
     # Add additional data for executives (handle both database and JSON modes)
@@ -2190,24 +2277,53 @@ def brother_dashboard():
     
     # Get summary data using database
     balance = member.get_balance() if hasattr(member, 'get_balance') else 0.0
+    payments = sorted(member.payments, key=lambda payment: payment.date, reverse=True)
+    payment_history = [
+        {
+            'amount': payment.amount,
+            'date': payment.date.isoformat(),
+            'method': payment.payment_method
+        }
+        for payment in payments
+    ]
+    total_paid = sum(payment.amount for payment in payments)
     payment_schedule = []  # TODO: Implement payment schedule for database mode
+    
+    current_semester = Semester.query.filter_by(is_current=True).first()
+    chapter_events = []
+    if current_semester:
+        chapter_events = Event.query.filter_by(semester_id=current_semester.id).order_by(Event.date.asc()).all()
+    
+    user_role = get_current_user_role()
+    chair_category = CHAIR_ROLE_TO_CATEGORY.get(user_role)
     
     # Basic data for all users
     data = {
         'member': member,
         'balance': balance,
-        'payment_schedule': payment_schedule
+        'payment_schedule': payment_schedule,
+        'payment_history': payment_history,
+        'total_paid': total_paid,
+        'user_role': user_role,
+        'chair_manual_links': CHAIR_MANUAL_LINKS,
+        'chair_role_to_category': CHAIR_ROLE_TO_CATEGORY,
+        'officer_roles': OFFICER_ROLES,
+        'chapter_events': chapter_events
     }
     
-    # Add additional data for executives based on permissions
-    if has_permission('view_all_data'):
-        from models import Member as DBMember
-        total_members = DBMember.query.count()
+    if current_semester and user_role in ['president', 'vice_president', 'admin', 'treasurer']:
+        total_members = Member.query.filter_by(semester_id=current_semester.id).count()
         data.update({
             'total_members': total_members,
-            'dues_summary': {'total_collected': 0.0, 'total_projected': 0.0, 'outstanding': 0.0, 'collection_rate': 0.0},
-            'budget_summary': {}
+            'dues_summary': build_dues_summary(current_semester.id),
+            'budget_summary': build_budget_summary(current_semester.id)
         })
+    elif current_semester and chair_category:
+        data.update({
+            'budget_summary': build_budget_summary(current_semester.id, categories=[chair_category])
+        })
+    else:
+        data.update({'budget_summary': {}})
     return render_template('brother_dashboard.html', **data)
 
 @app.route('/debug_pending_brothers')
@@ -2820,8 +2936,6 @@ def debug_fix_admin_role():
     except Exception as e:
         return {'error': str(e)}
 
-# This app is designed to run exclusively on cloud platforms (Render.com)
-# Local development has been disabled - use the live deployment only
 if __name__ == '__main__':
     # Check if we're on Render (cloud) by checking for PORT environment variable
     port = os.environ.get('PORT')
@@ -2833,14 +2947,12 @@ if __name__ == '__main__':
         print(f"🚀 Starting Flask app on Render.com (port {port})")
         app.run(host='0.0.0.0', port=port, debug=debug)
     else:
-        # Local environment - prevent hosting for security
-        print("\n❌ LOCAL HOSTING DISABLED")
-        print("\n🚀 This app runs exclusively on Render.com")
-        print("\n📋 To access your app:")
-        print("   Visit your Render dashboard and use the provided URL")
-        print("\n🔒 Local hosting permanently disabled for security")
-        import sys
-        sys.exit(1)
+        # Local development fallback
+        host = os.environ.get('HOST', '127.0.0.1')
+        local_port = int(os.environ.get('LOCAL_PORT', '8080'))
+        debug = os.environ.get('DEBUG', 'True').lower() == 'true'
+        print(f"🧪 Starting local dev server at http://{host}:{local_port}")
+        app.run(host=host, port=local_port, debug=debug)
 
 # Add error handlers to show detailed errors in production
 @app.errorhandler(500)

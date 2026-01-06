@@ -1,0 +1,26 @@
+{% extends "portal/base.html" %}
+
+{% block content %}
+  <h1>Dashboard</h1>
+  <p>Welcome to the new fraternity portal.</p>
+  <section>
+    <h3>Current Semester</h3>
+    {% if semester %}
+      <p>{{ semester.name }} ({{ semester.season }} {{ semester.year }})</p>
+    {% else %}
+      <p>No active semester set yet.</p>
+    {% endif %}
+  </section>
+  <section>
+    <h3>Your Roles</h3>
+    {% if current_user_roles %}
+      <ul>
+        {% for role in current_user_roles %}
+          <li>{{ role }}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No roles assigned.</p>
+    {% endif %}
+  </section>
+{% endblock %}
