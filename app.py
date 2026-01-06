@@ -11,7 +11,7 @@ from sqlalchemy.exc import OperationalError
 
 # Database imports
 from models import db, User, Role, Member, Transaction, Semester, Payment, BudgetLimit, TreasurerConfig, Event, init_default_roles
-from database import create_app as create_database_app, ensure_user_columns, init_database
+from database import create_app as create_database_app, init_database
 
 # Import Flask blueprints
 # from notifications import notifications_bp  # Commented out due to compatibility issues

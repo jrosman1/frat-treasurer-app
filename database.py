@@ -3,8 +3,6 @@ Database configuration and utilities
 """
 import os
 from flask import Flask
-from sqlalchemy import text
-
 from models import db, init_default_roles, Committee, User, Role, Member, Transaction, Semester
 
 def create_app(config_mode='development'):
