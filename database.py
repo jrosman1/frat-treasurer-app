@@ -40,6 +40,8 @@ def init_database(app):
     with app.app_context():
         # Create all tables
         db.create_all()
+
+        ensure_user_columns()
         
         # Initialize default roles
         init_default_roles()
@@ -128,6 +130,19 @@ def init_database(app):
             print("💡 Roles can be assigned via admin panel")
         
         print("Database initialized successfully!")
+
+
+def ensure_user_columns():
+    """Ensure new user columns exist for legacy SQLite databases."""
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table("users"):
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    with db.engine.begin() as connection:
+        if "is_active" not in existing_columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+        if "last_login_at" not in existing_columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN last_login_at DATETIME"))
 
 def check_database_status():
     """Check current database status"""

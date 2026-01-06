@@ -7,6 +7,7 @@ import json
 from typing import Dict, List, Optional
 from dotenv import load_dotenv
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from sqlalchemy.exc import OperationalError
 
 # Database imports
 from models import db, User, Role, Member, Transaction, Semester, Payment, BudgetLimit, TreasurerConfig, Event, init_default_roles
@@ -39,13 +40,22 @@ login_manager.login_message = 'Please log in to access this page.'
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    try:
+        return User.query.get(int(user_id))
+    except OperationalError as error:
+        if "no such column: users.is_active" in str(error):
+            with app.app_context():
+                ensure_user_columns()
+                db.session.remove()
+            return User.query.get(int(user_id))
+        raise
 
 # Initialize database tables
 print("🔄 Initializing database tables...")
 with app.app_context():
     try:
         db.create_all()
+        ensure_user_columns()
         print("✅ Database tables ready")
     except Exception as e:
         print(f"⚠️ Database table creation warning: {e}")
