@@ -1,0 +1,52 @@
+{% extends "portal/base.html" %}
+
+{% block content %}
+  <h1>Calendar</h1>
+  {% if semester %}
+    <p>Showing events for {{ semester.name }}.</p>
+  {% else %}
+    <p>No active semester set.</p>
+  {% endif %}
+
+  <section>
+    <h3>Upcoming Events</h3>
+    {% if events %}
+      <ul>
+        {% for event in events %}
+          <li>
+            <strong>{{ event.title }}</strong>
+            {% if event.starts_at %}
+              ({{ event.starts_at.strftime('%Y-%m-%d %H:%M') }} - {{ event.ends_at.strftime('%H:%M') }})
+            {% endif %}
+            {% if event.location %}- {{ event.location }}{% endif %}
+            <form method="post" action="{{ url_for('portal.delete_event', event_id=event.id) }}">
+              <button type="submit">Delete</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No events yet.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h3>Add Event</h3>
+    <form method="post" action="{{ url_for('portal.create_event') }}">
+      <label>Title <input name="title" required></label>
+      <label>Starts <input type="datetime-local" name="starts_at" required></label>
+      <label>Ends <input type="datetime-local" name="ends_at" required></label>
+      <label>Location <input name="location"></label>
+      <label>Description <textarea name="description"></textarea></label>
+      <label>Committee
+        <select name="committee">
+          <option value="">General</option>
+          <option value="Brotherhood">Brotherhood</option>
+          <option value="Social">Social</option>
+          <option value="Recruitment">Recruitment</option>
+        </select>
+      </label>
+      <button type="submit">Create Event</button>
+    </form>
+  </section>
+{% endblock %}

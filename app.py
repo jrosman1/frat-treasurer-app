@@ -17,6 +17,7 @@ from database import create_app as create_database_app, init_database
 from export_system import export_bp
 from chair_management import chair_bp
 from executive_views import exec_bp
+from portal import portal_bp
 
 
 # Load environment variables
@@ -56,6 +57,7 @@ print("✅ App initialized with database support")
 app.register_blueprint(export_bp)
 app.register_blueprint(chair_bp)
 app.register_blueprint(exec_bp)
+app.register_blueprint(portal_bp)
 
 # SMS Gateway mappings for email-to-SMS (Updated and optimized)
 SMS_GATEWAYS = {
@@ -657,16 +659,14 @@ def login():
         
         if user:
             login_user(user, remember=True)
+            user.last_login_at = datetime.utcnow()
+            db.session.commit()
             session['user'] = user.phone
             session['role'] = role
             session['user_id'] = user.id
             flash(f'Welcome, {user.first_name}!')
             
-            # Redirect based on role
-            if role == 'brother':
-                return redirect(url_for('brother_dashboard'))
-            else:
-                return redirect(url_for('dashboard'))
+            return redirect(url_for('portal.dashboard'))
         else:
             flash('Invalid username or password')
             return redirect(url_for('login'))
@@ -678,6 +678,7 @@ def login():
 
 @app.route('/logout')
 def logout():
+    logout_user()
     session.clear()
     flash('You have been logged out successfully')
     return redirect(url_for('login'))
