@@ -33,3 +33,5 @@ Thumbs.db
 # Data backup files (keep the JSON files but ignore backups)
 data/*.bak
 data/*_backup.*
+
+.venv/
